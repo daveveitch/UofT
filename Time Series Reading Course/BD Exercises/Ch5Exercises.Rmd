@@ -1,0 +1,105 @@
+---
+title: "Chapter 5 Exercises"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(itsmr)
+```
+
+#### Example 5.1.1 Dow Jones
+
+
+```{r, echo=FALSE}
+# Difference data to eliminate trend
+dowj_diff <- diff(dowj,lag=1)
+
+# plot ACF
+plota(dowj_diff)
+
+# make data zero-mean
+dowj_diff <- dowj_diff - mean(dowj_diff)
+
+# given ACF>1 lie in bounds, we will try an AR(1) model
+dowj_model <- yw(dowj_diff,p=1)
+
+# create a few forecasts
+forecasts <- forecast(dowj_diff,M=NULL,a=dowj_model,alpha=.05)
+
+```
+
+#### Exercise 5.4
+
+```{r}
+A <- matrix(c(1.15,   .49105,
+              .49105, 1.15), 2)
+
+phi_hat <- solve(A)%*%c(.49105,.54625)
+
+print(phi_hat)
+print(solve(A))
+```
+
+```{r}
+#### PACF calculation
+# PACF(1)
+print('PACF 1')
+print((1/1.15)*.49105)
+print('PACF 2')
+print(phi_hat[2])
+
+```
+
+#### Exercise 5.5
+
+```{r}
+
+# Simulate 20 realizations of MA(1) process
+realizations <- list()
+
+for (i in 1:20){
+  realization <- sim(specify(ar=0,ma=c(.6),sigma2=1),n=200)
+  realizations[[i]] <- realization  
+}
+
+# Compute moment estimates of theta
+theta_estimates_moment <- c()
+
+for (i in 1:20){
+  sim_acvf <- acvf(realizations[[i]])
+  correl <- sim_acvf[2]/sim_acvf[1]
+  
+  if (abs(correl) <= .5){
+    theta <- (1-(1-4*correl**2)**.5)/(2*correl)  
+  } else {
+    theta <- correl/abs(correl)
+  }
+  
+  theta_estimates_moment[i] <- theta
+}
+
+# Maximum Likelihood Estimate of Theta
+theta_estimates_maxlike <- c()
+
+for (i in 1:20){
+  theta_estimates_maxlike[i] <- arma(realizations[[i]],p=0,q=1)$theta
+}
+
+
+hist(theta_estimates_moment, col=rgb(1,1,0,0.7), breaks=20,ylim=c(0,10),main='Comparison of Theta Estimates',xlab='Estimates')
+hist(theta_estimates_maxlike, col=rgb(0,1,1,0.4), add=T,alpha=.5)
+legend("topright",legend=c("Moment", "Max Like"),fill=c(rgb(1,1,0,0.7), rgb(0,1,1,0.4)), cex=0.8)
+
+# Sample Mean and Variance of Estimates
+print('Moment - Sample Mean and Var')
+print(paste(mean(theta_estimates_moment)," ", var(theta_estimates_moment)))
+print('Max Like - Sample Mean and Var')
+print(paste(mean(theta_estimates_maxlike)," ", var(theta_estimates_maxlike)))
+```
+
+From this example it would appear the maximum likelihood estimator is preferable over the moment estimator given its lower variance.

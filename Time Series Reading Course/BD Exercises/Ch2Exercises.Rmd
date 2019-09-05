@@ -1,0 +1,118 @@
+---
+title: "Chapter 2 Exercises"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(itsmr)
+```
+
+#### Exercise 2.4
+
+```{r}
+par(mfrow=c(4,1))
+
+t <- seq(1,100,1)
+Z <- rnorm(5)
+X <- Z[1] + Z[2]*cos(t*pi/2) + Z[3]*sin(t*pi/2) + Z[4]*cos(t*pi/4) + Z[5]*sin(t*pi/4)
+plot(X,type='l')
+title('Different Realizations of Time Series')
+
+for(i in seq(3)){
+  Z <- rnorm(5)
+  X <- Z[1] + Z[2]*cos(t*pi/2) + Z[3]*sin(t*pi/2) + Z[4]*cos(t*pi/4) + Z[5]*sin(t*pi/4)
+  plot(X,type='l')
+}
+
+
+
+```
+
+
+#### Exercise 2.10
+
+```{r}
+# Create a dummy ARMA model and adjust phi and theta accordingly
+arma_model = arma(Sunspots,p=1,q=1)
+arma_model$phi <- .5
+arma_model$theta <- .5
+
+print('MA Infinity Coefficients')
+print(ma.inf(arma_model,5))
+print('AR Infinity Coefficients')
+print(ar.inf(arma_model,5))
+```
+
+#### Exercise 2.16
+
+```{r}
+# plot sample ACF and PACF 
+plota(Sunspots, v=NULL, h=40)
+
+
+# mean correct data
+Sunspots_mc <- Sunspots - mean(Sunspots)
+
+# fit AR(1) model
+ar_2_model <- yw(Sunspots_mc, 2)
+print('AR 2 Coefficients')
+print(ar_2_model$phi)
+
+```
+
+#### Exercise 2.17
+
+```{r}
+# forecast 10 steps ahead
+forecast(Sunspots_mc, NULL, ar_2_model, h = 10, opt = 2, alpha = 0.05)
+```
+
+#### Some example processes
+
+$$
+\begin{align}
+  MA(1) &: X_t=Z_t+\theta Z_{t-1}\\
+  AR(1) &: X_t = \phi X_{t-1} +Z_t\\
+  ARMA(1,1) &: X_t = \phi X_{t-1} + Z_t + \theta Z_{t-1}  
+\end{align}
+$$
+
+```{r}
+phi <- .9
+theta <- .1
+
+set.seed(10)
+z <- rnorm(100)
+z_min_1 <- z[-1]
+z_min_1[[100]] <-0 
+
+# MA process
+x_ma <- z + theta*z_min_1
+
+# AR process
+x_ar <- z
+for(i in seq(2,100,1)){
+  x_ar[[i]] <- x_ar[[i]] + phi* x_ar[[i-1]]
+}
+
+# ARMA process
+x_arma <- x_ma
+for(i in seq(2,100,1)){
+  x_arma[[i]] <- x_arma[[i]] + phi* x_arma[[i-1]]
+}
+
+plot(cumsum(z),type='l',ylim=c(-20, 5))
+lines(x_ma,col='red')
+lines(x_ar,col='blue')
+lines(x_arma,col='orange')
+legend('bottomleft', legend=c("Cumulative Noise", "MA",'AR','ARMA'),
+       col=c('black',"red", "blue",'orange'), lty=1,cex=0.8)
+
+```
+
+
+

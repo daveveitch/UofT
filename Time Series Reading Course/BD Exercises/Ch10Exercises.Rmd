@@ -1,0 +1,46 @@
+---
+title: "Chapter 10 Notes"
+output: html_notebook
+---
+
+#### Figure 10-1
+
+Example of the ARAR algorithm
+
+```{r}
+library(itsmr)
+arar(deaths,h=24,opt=2)
+```
+
+#### Example of Exponential Smoothing
+
+```{r}
+plot(airpass,type='l')
+lines(smooth.exp(airpass,0.1),col='purple')
+lines(smooth.exp(airpass,.25),col='red')
+lines(smooth.exp(airpass,.75),col='green')
+
+legend('topleft',c('Actual',expression(paste(alpha,'=.1')),expression(paste(alpha,'=.25')),expression(paste(alpha,'=.75'))),lty=c(1,1,1,1),lwd=c(2.5,2.5),col=c('black','purple','red','green'))
+```
+
+#### Example 10.2.1 Holt Winters
+
+```{r}
+hw_model <- HoltWinters(deaths,alpha=NULL,beta=NULL,gamma=FALSE)
+
+plot(deaths,xlim=c(0,(length(deaths)+10)),type='l')
+lines(x=(length(deaths)+1):(length(deaths)+10),y=predict(hw_model,n.ahead=10),col='red')
+```
+
+#### Example 10.3.2 Seasonal Holt Winters
+
+```{r}
+# Necessary to use a time series object for seasonality
+deaths_dat <- ts(data=deaths,start=1,frequency=12)
+
+# By setting gamme to NULL we get a seasonal model
+hw_model <- HoltWinters(deaths_dat,alpha=NULL,beta=NULL,gamma=NULL)
+
+plot(deaths,xlim=c(0,(length(deaths)+10)),type='l')
+lines(x=(length(deaths)+1):(length(deaths)+10),y=predict(hw_model,n.ahead=10),col='red',type='o')
+```

@@ -1,0 +1,302 @@
+---
+title: "Chapter 6 Exercises"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(itsmr)
+library(expm)
+```
+
+#### Exercise 6.4
+
+
+```{r, echo=FALSE}
+# Mean correct the series
+lake_mean <- mean(lake)
+lake_data <- lake - lake_mean
+
+ar_1 <- arma(lake_data,p=1,q=0)
+ar_2 <- arma(lake_data,p=2,q=0)
+
+# Conduct Augmented Dickey Fuller Test
+
+#### AR 1
+phi_0_star <- lake_mean * (1-ar_1$phi[[1]])
+phi_1_star <- ar_1$phi[[1]] - 1
+
+S_2 <- sum(diff(lake)-phi_0_star-phi_1_star*lake[-length(lake)])**2/(length(lake)-3)
+
+SE_phi_1_star <- sqrt(S_2)*(sum((lake[-length(lake)]-lake_mean)**2))**-.5
+
+DF_t_stat <- phi_1_star/SE_phi_1_star
+
+
+print(paste('Therefore with a test statistic of ',DF_t_stat,' we reject the null hypothesis of a unit root for the AR(1) model.'))
+
+#### AR 2
+phi_0_star <- lake_mean * (1-ar_2$phi[[1]]-ar_2$phi[[2]])
+phi_1_star <- ar_2$phi[[1]] + ar_2$phi[[2]] - 1
+phi_2_star <- -1*ar_2$phi[[2]]
+
+diff_lake_min_1 <- c(0,diff(lake))
+diff_lake_min_1 <- diff_lake_min_1[1:(length(diff_lake_min_1)-1)]
+
+# Estimate sigma^2
+S_2 <- sum(diff(lake)-phi_0_star-phi_1_star*lake[-length(lake)]-phi_2_star*diff_lake_min_1)**2/(length(lake)-3)
+
+# Create Design Matrix for Estimating Sample Variance
+X <- matrix(data = c(rep(1,times=length(diff_lake_min_1)),
+                     lake[-length(lake)],
+                     diff_lake_min_1), 
+            nrow = 3, ncol = length(diff_lake_min_1),byrow=TRUE)
+X <- t(X)
+
+# Calculate Standard Error
+SE_phi_1_star <- sqrt((S_2/(length(lake)-4))/solve(t(X)%*%X)[2,2])
+
+DF_t_stat <- phi_1_star/SE_phi_1_star
+
+
+print(paste('Therefore with a test statistic of ',DF_t_stat,' we reject the null hypothesis of a unit root for the AR(2) model, although it should be pointed out we are less confident than we were under the AR(1) case.'))
+```
+
+#### Exercise 6.7
+
+```{r}
+# Exclude last 12 observations and transform by taking logs
+air_1 <- airpass[1:(length(airpass)-12)]
+air_1 <- log(air_1)
+
+# Take a look at the differenced series
+plot(diff(air_1,lag=1),type='l')
+
+# Time series appears to have some seasonality, so will try to eliminate it by differencing by 12
+plot(diff(air_1,lag=12),type='l')
+
+air_1 <- diff(air_1,lag=12)
+
+# Looks fairly stationary now. Now will use autofit() which will fit a number of ARMA models to the differenced data and pick the one with the best AICC
+auto_model <- autofit(air_1)
+
+# 95% CI for Components of Phi and Theta
+print('Phi CI')
+print(matrix(data = c(auto_model$phi-1.96*auto_model$se.phi,
+                auto_model$phi,
+                auto_model$phi+1.96*auto_model$se.phi),
+       ncol = 3,byrow=FALSE))
+
+print('Theta CI')
+print(matrix(data = c(auto_model$theta-1.96*auto_model$se.theta,
+                auto_model$theta,
+                auto_model$theta+1.96*auto_model$se.theta),
+       ncol = 3,byrow=FALSE))
+
+# Check the whiteness of the residuals
+residuals <- Resid(air_1,M=NULL,a=auto_model)
+plota(residuals)
+
+# Observing the ACF we see, in consultation with 1.6.a that the sample autocorrelation function suggests the residuals are IID
+
+# Compute forecasts of the time series going forward
+forecasts <- forecast(air_1,M=NULL,a=auto_model,h=12,alpha=.05,opt=1)
+
+## Plot forecasts ##
+air_1_forecast <- c(air_1,forecasts$pred)
+air_1_uci <- c(air_1,forecasts$u)
+air_1_lci <- c(air_1,forecasts$l)
+
+# Compute reverse differences
+air_1_forecast <- exp(diffinv(air_1_forecast,lag=12,xi=log(airpass)[1:12]))
+air_1_uci <- exp(diffinv(air_1_uci,lag=12,xi=log(airpass)[1:12]))
+air_1_lci <- exp(diffinv(air_1_lci,lag=12,xi=log(airpass)[1:12]))
+
+# Have differences in logs, now need to add back initial value (log airpass[1])
+plot(air_1_forecast,type='l',ylim=c(min(airpass),max(air_1_uci)))
+lines(x=133:144,y=air_1_uci[133:144],col='red',lty=2)
+lines(x=133:144,y=air_1_lci[133:144],col='red',lty=2)
+lines(x=133:144,y=air_1_forecast[133:144],col='red')
+lines(x=133:144,y=airpass[133:144],col='black')
+lines((length(air_1)+1):(length(air_1)+12),forecasts$pred,col='red')
+
+## Create actual vs. forecast values ##
+performance_assess <- matrix(data = c(airpass[133:144],
+                            air_1_forecast[133:144],
+                           airpass[133:144]-air_1_forecast[133:144],
+                      air_1_lci[133:144],
+                      air_1_uci[133:144]),
+                      ncol = 5,byrow=FALSE)
+
+colnames(performance_assess) <- c('Act','For','Err','LCL','UCL')
+print(performance_assess)
+print('We can see that yes the last value of the series lies within the 95% prediction bounds.')
+```
+
+#### Exercise 6.8
+
+```{r}
+# Exclude last 12 observations and transform by taking logs
+air_1 <- airpass[1:(length(airpass)-12)]
+air_1 <- log(air_1)
+
+# Estimated trend assuming period of 12
+est_trend <- filter(air_1,c(.5,1,1,1,1,1,1,1,1,1,1,1,.5),method='convolution',sides=2)/12
+seas_est <- air_1[which(!is.na(est_trend))]-est_trend[which(!is.na(est_trend))]
+
+# Estimates seasonal component
+seas_component <- c()
+
+for (month in seq(1,12)){
+  seas_component[month] <- mean(seas_est[seq(month, length(seas_est), 12)])
+}
+
+seas_component <- seas_component - mean(seas_component[1:12])
+
+# deseasonalize the data
+seas_component <- rep(seas_component,(length(air_1) %/% 12) + 3)
+seas_component <- seas_component[8:(length(air_1)+7)]
+air_1_deseason <- (air_1-seas_component)
+
+# find deseasoned trend
+est_trend <- trend(air_1_deseason,2)
+x <- seq(1,length(air_1),1)
+x_sq <- x**2
+fit <- lm(air_1_deseason~1+x+x_sq)
+
+# fit an arma model to the residuals
+residuals <- air_1_deseason-est_trend
+resid_model <- arma(residuals,p=0,q=0)
+
+for (p in seq(0,4)){
+  for (q in seq(0,4))
+    test_model <- arma(residuals,p,q)
+    
+    if(test_model$aicc<resid_model$aicc){
+      resid_model <- test_model
+    }
+}
+
+# forecast residuals
+forecast_est <- forecast(residuals,M=NULL,a=resid_model,h=12,opt=2,alpha=0.05)
+
+forecast_mean <- forecast_est$pred
+forecast_x <- rep(length(air_1),12)+seq(1,12)
+forecast_trend <- fit$coefficients[1]+forecast_x*fit$coefficients[2]+forecast_x**2*fit$coefficients[3]
+
+forecast_mean <- exp(forecast_mean + forecast_trend + seas_component[1:12])
+forecast_uci <- exp(forecast_est$u + forecast_trend + seas_component[1:12])
+forecast_lci <- exp(forecast_est$l + forecast_trend + seas_component[1:12])
+
+# Have differences in logs, now need to add back initial value (log airpass[1])
+air_1_forecast <- c(airpass[1:(length(airpass)-12)],forecast_mean)
+plot(air_1_forecast,type='l',ylim=c(min(airpass),max(forecast_uci)))
+lines(x=133:144,y=forecast_uci,col='red',lty=2)
+lines(x=133:144,y=forecast_lci,col='red',lty=2)
+lines(x=133:144,y=forecast_mean,col='red')
+lines(x=133:144,y=airpass[133:144],col='black')
+lines((length(air_1)+1):(length(air_1)+12),forecasts$pred,col='red')
+
+## Create actual vs. forecast values ##
+performance_assess <- matrix(data = c(airpass[133:144],
+                            forecast_mean,
+                           airpass[133:144]-forecast_mean,
+                      forecast_lci,
+                      forecast_uci),
+                      ncol = 5,byrow=FALSE)
+
+colnames(performance_assess) <- c('Act','For','Err','LCL','UCL')
+print(performance_assess)
+print('We can see that yes the last value of the series lies within the 95% prediction bounds, and so do all other values.')
+
+
+```
+
+#### Exercise 6.13
+
+```{r}
+tundra <- c(16.9111, 16.6333, 16.6667, 17.1667, 19.2667, 15.4000, 16.6111, 17.0444, 15.5556, 17.5667, 16.9111, 16.3556, 17.2333, 17.7667, 16.9222, 17.7222, 15.9333, 15.1222, 15.4333, 16.6333, 16.1444, 17.1889, 17.7889, 17.9556, 17.2000, 16.2111, 17.0667, 17.8556, 16.5889, 17.1000, 17.1000, 16.3556, 15.2889, 18.0889, 16.1111, 16.7667, 16.8778, 18.3111, 17.1222, 16.1000, 18.0444, 17.0000, 18.0556, 17.9667, 17.6333, 17.2778, 14.9889, 18.1111, 19.1556, 18.4444, 16.4556, 17.6222, 18.4444, 18.3444, 18.0889, 16.8111, 18.5444, 18.8222, 18.9556, 17.2000, 18.3000, 19.4556, 18.6111, 17.1778, 15.8111, 18.8111, 14.3444, 17.6778, 19.3444, 16.7889, 14.8556, 18.3778, 18.4111, 16.8222, 17.1000, 15.3333, 15.5889, 15.3222, 16.8889, 18.9222, 18.6444, 17.3333, 16.9222, 16.2667, 19.8444, 18.1111, 18.2444, 16.2222, 17.5556, 16.8111, 14.7667, 14.9556, 18.8778, 17.5444, 18.7667, 19.4889, 18.1889, 17.3889, 17.8222)
+x <- seq(1,length(tundra))
+
+fit_1 <- lm(tundra~1+x)
+summary(fit_1)
+print('Here we see the slope of the line as (barely) significantly different from zero')
+
+resid_model <- arma(fit_1$residuals,p=1,q=0)
+
+for (p in seq(0,3)){
+  for (q in seq(0,3))
+
+    test_model <- arma(fit_1$residuals,p,q)
+    
+    if(test_model$aicc<resid_model$aicc){
+      resid_model <- test_model
+    }
+}
+
+```
+
+By virtue of the model being an AR(1) process the $$\gamma(h)= \phi^{|h|} \sigma^2 / (1-\phi^2)$$
+
+```{r}
+sigma_sq <- resid_model$sigma2
+phi <- resid_model$phi
+
+cov_n <- diag(99)
+cov_n <- sigma_sq/(1-phi**2) * phi^abs(row(cov_n)-col(cov_n))
+V <- 1/sigma_sq*cov_n
+
+# Solve for T matrix
+T <- sqrtm(solve(V))
+
+# Specify the design matrix
+X <- matrix(data = c(rep(1,length(tundra)),seq(1,length(tundra))),
+                      ncol = 2,byrow=FALSE)
+
+
+# Calculate beta_hat_gls
+beta_hat_gls <- solve(t(X)%*%t(T)%*%T%*%X)%*%t(X)%*%t(T)%*%T%*%tundra
+
+# Compute residuals again
+resid_new <- tundra - X%*%beta_hat_gls
+
+# Compute new residual model
+resid_model_new <- arma(resid_new,p=1,q=0)
+
+for (p in seq(0,3)){
+  for (q in seq(0,3))
+
+    test_model <- arma(resid_new,p,q)
+    
+    if(test_model$aicc<resid_model_new$aicc){
+      resid_model_new <- test_model
+    }
+}
+
+# Since estimates are relatively the same we will stick with these slightly different estimates
+
+# Print covariance matrix of beta_hat_gls
+cov_beta_hat_gls <- solve(t(X)%*%solve(cov_n)%*%X)
+
+print('We see the standard errors of Beta_hat_gls as:')
+print(sqrt(diag(cov_beta_hat_gls)))
+print('The one-sided p-value of the slope is')
+print(1-pnorm(beta_hat_gls[2]/sqrt(diag(cov_beta_hat_gls))[2]))
+print('Therefore we fail to reject the null hypothesis that this slope is different than 0 (would need p-value < .025)')
+```
+```{r}
+# Forecast forv 1994-2004
+X_fore <- matrix(data = c(rep(1,10),seq(100,109)),
+                      ncol = 2,byrow=FALSE)
+resid_fore <- forecast(resid_new,M=NULL,a=resid_model_new,opt=0)$pred
+
+Y_fore <- X_fore%*%beta_hat_gls + resid_fore
+plot(tundra,type='l',xlim=c(0,109),main='Plot with forecast')
+lines(x=seq(100,109),y=Y_fore,col='red')
+```
+
+

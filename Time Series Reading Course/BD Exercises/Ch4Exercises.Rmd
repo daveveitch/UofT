@@ -1,0 +1,69 @@
+---
+title: "Chapter 4 Exercises"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(itsmr)
+```
+
+#### Periodogram Example
+
+
+```{r, echo=FALSE}
+par(mfrow=c(3,2))
+plot(Sunspots,type='l')
+periodogram(Sunspots,opt=2)
+plot(airpass,type='l')
+periodogram(airpass,opt=2)
+plot(wine,type='l')
+periodogram(wine,opt=2)
+```
+
+#### Exercise 4.2
+
+```{r}
+z <- rnorm(100,mean=0,sd=(2*pi)**.5)
+periodogram(z,rep(1,10))
+```
+
+#### Exercise 4.7
+
+```{r}
+yw_sunspots <- yw(Sunspots,2)
+plots(yw_sunspots)
+print(c('Phi 1',yw_sunspots$phi[1]))
+print(c('Phi 2',yw_sunspots$phi[2]))
+print(c('Sigma Squared',yw_sunspots$sigma2))
+```
+
+Following the process of example 4.4.1 we see the model takes its maximum frequency where $cos(\lambda)=\frac{(\phi_1 \phi_2-\phi_1)}{4\phi_2}$. This is equal to .848, or $\lambda=.55$ radians. The period is equal to $\frac{1}{\lambda / 2 \pi}=11.3$, or oe cycle equaling 11.3 years.
+
+#### Exercise 4.8
+
+```{r}
+ar_3 <- specify(ar=c(0,0,.99))
+plots(ar_3)
+```
+
+The spectral density plot above would suggest that we see oscillatory behaviour. This is because of the very high frequency around 2. This is equivalent to a period of approximately three years.
+
+```{r}
+set.seed(1)
+simulated_data <- sim(ar_3,60)
+plotc(simulated_data)
+```
+
+This graph supports the conclusion reached in part b of oscillating behaviour with a period of 3.
+
+```{r}
+smooth_simulated_data <- smooth.ma(simulated_data,1)
+plotc(simulated_data,smooth_simulated_data)
+periodogram(smooth_simulated_data)
+```
+
