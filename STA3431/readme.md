@@ -1,1 +1,1 @@
-
+This paper analyzes how Simulated Annealing can be applied to the Travelling Salesman Problem. The effect of varying the proposal of new states, employing restarts, and increasing the dimension of the problem are investigated. The results of this analysis show Simulated Annealing is able to effectively find the optimal solution in low dimensions, but struggles to find the optimal solution in higher dimensions..
