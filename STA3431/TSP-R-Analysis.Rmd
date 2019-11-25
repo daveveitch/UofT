@@ -1,0 +1,350 @@
+---
+title: "STA3431 Mini-Project - R Appendix"
+author: "David Veitch"
+date: "25/11/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r importdata}
+library(chron)
+
+#### Import Driving Time Data #### 
+ia_times <- read.csv('IADrivingTimes.csv')
+
+# Delete duplicate towns
+# Two Oaklands (first bad)
+bad_index = which(ia_times[1]=='Oakland')[1]
+ia_times <- ia_times[-c(bad_index),-c(bad_index+1)]
+
+# Two Centervilles (second bad)
+bad_index = which(ia_times[1]=='Centerville')[2]
+ia_times <- ia_times[-c(bad_index),-c(bad_index+1)]
+
+# set first column as row names
+ia_cities <- ia_times[,1]
+ia_times <- as.matrix(ia_times[,-1])
+
+ia_times <- as.vector(24*as.numeric(times(ia_times)))
+ia_times <- matrix(ia_times,nrow=length(ia_cities),ncol=length(ia_cities))
+rownames(ia_times)<-ia_cities
+colnames(ia_times)<-ia_cities
+
+# NA Values (same city to same city), fill with 0
+ia_times[is.na(ia_times)]<-0
+
+#### Import Population Data ####
+ia_population <- read.csv('IAPopulation.csv',header=FALSE,row.names=1)
+colnames(ia_population)<- 'Population'
+rownames(ia_population)[1] <- 'Ackley'
+
+# ia_population in order
+ia_population_ordered = ia_population[order(ia_population,decreasing=TRUE),,drop=FALSE]
+
+#### Import Latitude Longitude Data ####
+ia_latlong = read.csv('IALatLong-MapsofWorld.com.csv',header=FALSE,row.names=1)
+colnames(ia_latlong)<-c('lat','lon')
+
+# Fix rownames
+rownames(ia_latlong)[1] <- 'Ackley'
+rownames(ia_latlong)[448]<- 'Jewell'
+rownames(ia_latlong)[856]<- 'Saint Ansgar'
+
+# merge lat/lon dataset with cities in population dataset
+ia_latlong <- merge(x=ia_population,y=ia_latlong,by=0,all.x=TRUE)
+rownames(ia_latlong)<-ia_latlong$Row.names
+ia_latlong<-ia_latlong[,c('lat','lon')]
+```
+
+
+```{r M_cities}
+# here we will output the dataframe with the top M cities 
+# according to population and their driving times
+reduced_city_list <- function(times,population,M){
+  # INPUT   - times - dataframe of driving times
+  #         - population - dataframe of populations of cities
+  #         - M - number of cities to use
+  # OUTPUT  - dataframe of driving times for only certain cities
+  
+  # True/False vector with cities meeting minimum cutoff as True
+  
+  cities <- rownames(population[order(-population), , drop = FALSE])[1:M]
+  times <- times[cities,cities]
+  return(times)
+  
+}
+
+# Example
+# example_cities = reduced_city_list(ia_times,ia_population,5)
+```
+
+```{r evaluate_distance}
+# Evaluate the distance of a given route
+route_time <- function(route,times){
+  # INPUT   - times - dataframe of driving times
+  #         - route - a vector of city names specifying the route one is taking
+  # OUTPUT  - the total time of the route
+  
+  route_length = length(route)
+
+  # Rearranges the time matrix with origin as rows and destination as columns
+  times = times[route[1:(route_length-1)],route[2:route_length]]
+
+  # total time of the trip, returns it
+  return(sum(diag(times)))
+  
+}
+
+
+# # Create a route, make it start in Des Moines
+# start_route = rep(0,dim(example_cities)[1]+1)
+# start_route[1] = 'Des Moines'
+# start_route[length(start_route)]='Des Moines'
+# start_route[2:(length(start_route)-1)] <- sample(rownames(example_cities)[rownames(example_cities)!='Des Moines'],replace=FALSE)
+# 
+# # Calculate Example Route Time
+# route_time(start_route,example_cities)
+```
+
+```{r generate_proposal}
+generate_proposal <- function(current_route,start_constraint,end_constraint,num_swaps){
+  # INPUT   - current_route - route that has currently been suggested
+  #         - start_constraint - T/F if we can change the starting city
+  #         - end_constraint - T/F if we can change the starting city
+  #         - num_swaps - the number of indexes to swap in a given proposal
+  # OUTPUT  - proposal_route - a different route with two destinations swapped
+  
+  route_length = length(current_route)
+  proposal_route = current_route
+  
+  # Various cases based on if there is a start or end constraint  
+  if(start_constraint & end_constraint){
+    # start and end constraint
+    idx_swap = sample(2:(route_length-1), num_swaps, replace=FALSE)
+  } else if(start_constraint){
+    # start constraint
+    idx_swap = sample(2:(route_length), 2, replace=FALSE)
+  } else if(end_constraint){
+    # end constraint
+    idx_swap = sample(1:(route_length-1), 2, replace=FALSE)
+  } else {
+    # no constraint
+    idx_swap = sample(1:(route_length), 2, replace=FALSE)
+  }
+  
+  new_order = sample(idx_swap,num_swaps,replace=FALSE)
+  proposal_route[idx_swap] = proposal_route[new_order]
+  
+  return(proposal_route)
+}
+
+# generate_proposal(c("Des Moines","A","B","C","D",'E','F','G',"Des Moines" ),TRUE,TRUE,3)
+```
+
+```{r mcmc_tempering}
+
+#########################
+#### Key Parameters #####
+M = 50000
+num_cities = 25
+cities = reduced_city_list(ia_times,ia_population,num_cities)
+num_proposal_swaps = 3
+
+# Beginning temp
+start_temp=10
+temp=10
+
+# Cooling type
+# GEOMETRIC, LOG, LINEAR options
+cool_type = 'GEOMETRIC'
+lin_temp = 0.000199999
+geo_temp = .9999
+
+# Num Restarts (1 if only one run of program)
+num_restarts = 6
+
+
+# Start/End city, set to NaN if none
+start_city = 'Des Moines'
+end_city = 'Des Moines'
+
+###########################
+
+restart_solutions = list()
+restart_route_list = list()
+restart_route_time = list()
+start_constraint = (nchar(start_city)>1)
+end_constraint = (nchar(end_city)>1)
+
+# set graphing parameters for 6 runs
+par(mfrow=c(2,3))
+
+for(restart in seq(1,num_restarts)){
+  set.seed(restart)
+  
+  # list of routes and distances algorithm takes
+  route_list = list()
+  route_time_list = c()
+  accepts=0
+  
+  # Initial Route - Have it Start in start_city, end in end city
+  route = rep(0,dim(cities)[1]+1)
+  route[1] = start_city
+  route[length(route)]=end_city
+  route[2:(length(route)-1)] <- sample(rownames(cities)[rownames(cities)!=c(start_city,end_city)],
+                                       replace=FALSE)
+  
+  route_list[[1]]=route
+  route_time_list[1]=route_time(route,cities)
+  
+  # the best route is currently the first one
+  best_route = list(route,route_time_list[1])
+  
+  for(i in 2:M){
+    # Propose a Move
+    Y = generate_proposal(route,start_constraint,end_constraint,num_proposal_swaps)
+    
+     # Update temperature
+    if(cool_type=='GEOMETRIC'){
+      temp=start_temp*geo_temp^i
+    } else if(cool_type=='LOG'){
+      temp = start_temp/log(1+i)
+    } else if(cool_type=='LINEAR'){
+      temp = temp-lin_temp
+    }
+  
+    # Accept/reject based on inverse distance
+    U = runif(1)  
+    A = ((exp(-1*route_time(Y,cities)))/(exp(-1*route_time(route,cities))))^(1/temp)
+    
+    if(U<A){
+      route = Y
+      accepts = accepts+1
+    }
+    
+    route_list[[i]] = route
+    route_time_list[i] = route_time(route,cities)
+  
+  } 
+    
+  plot(route_time_list,main=paste('Restart',restart,'-','Min Time',
+                                  round(min(route_time_list),2)),
+       xlab='iteration',ylab='Time')  
+  
+  restart_solutions[[restart]] = route_list[[which.min(route_time_list)[1]]]
+  restart_route_list[[restart]] = route_list
+  restart_route_time[[restart]] = route_time_list
+}
+
+
+```
+
+```{r createmap}
+library(maps)
+library(mapdata)
+library(mapproj)
+
+par(mfrow=c(1,2),oma = c(0, 0, 1, 0))
+
+# Which iteration of the algorithm to run
+restart_number = 4
+route_to_map = restart_route_list[[restart_number]]
+
+### Map Progression ####
+cities_to_map = ia_latlong[route_to_map[[1]],]
+
+for(i in c(1,seq(1000,50000,by=1000))){
+  # png(paste(i,'.png'),width=350, height = 350)
+  
+  par(mfrow=c(1,2),oma = c(0, 0, 2, 0),mar = c(5,0,4,0))
+  
+  cities_to_map = ia_latlong[route_to_map[[i]],]
+  par(mar=c(0,0,0,0))
+  map("state","Iowa",fill=TRUE,col='grey',border='grey')
+  points(x=cities_to_map[,c('lon')],y=cities_to_map[,c('lat')],
+       col="black", cex=1, pch=20)
+  lines(x=cities_to_map[,c('lon')],y=cities_to_map[,c('lat')], col = "black")
+  
+  title( main = 'Route',line=1)
+  
+  # plot start/finish
+  points(x=cities_to_map[,c('lon')][1],y=cities_to_map[,c('lat')][1],
+       col="green", cex=1, pch=24,bg='green')
+  points(x=cities_to_map[,c('lon')][length(cities_to_map[,1])],
+         y=cities_to_map[,c('lat')][length(cities_to_map[,1])],
+       col="red", cex=1, pch=24,bg='red')
+  
+  plot(restart_route_time[[restart_number]][1:i],xlim=c(1,50000),ylim=c(20,70),main='Distance \n \n',type='l')
+  mtext(paste('Iteration',i), outer = TRUE, cex = 1.5)
+  
+  # dev.off()
+}
+
+
+
+```
+
+```{r papergraphics}
+# iowa cities
+par(mar=c(0,0,0,0))
+map("state","Iowa",fill=TRUE,col='grey')
+points(x=ia_latlong[,c('lon')],y=ia_latlong[,c('lat')],
+       col="black", cex=2, pch=20)
+
+```
+
+```{r 10cityoptimal}
+# Code to find the optimal route for 10 cities
+
+# library(combinat)
+# 
+# route_list = list()
+# route_time_list = c()
+# 
+# route = rep(0,dim(cities)[1]+1)
+# route[1] = start_city
+# route[length(route)]=end_city
+# 
+# route[2:(length(route)-1)] <- sample(rownames(cities)[rownames(cities)!='Des Moines'],replace=FALSE)
+# 
+# route_list[[1]]=route
+# route_time_list[1]=route_time(route,cities)
+# 
+# perm_routes = permn(route[2:11])
+# 
+# for(i in seq(1,length(perm_routes))){
+#   perm_routes[[i]] = c('Des Moines',perm_routes[[i]],'Des Moines')
+# }
+# 
+# route_times = c()
+# 
+# for(i in seq(1,length(perm_routes))){
+#   route_times[i] = route_time(perm_routes[[i]],cities)
+# }
+
+```
+
+```{r acceptanceplot}
+accepts = (diff(restart_route_time[[1]])!=0)
+
+restart_plot = plot(filter(accepts, rep(1/100,100)),
+                    main='Restart 1 Acceptance Probabilities',
+                    xlab='Iteration',
+                    ylab='Acceptance Probability of Last 100 Iterations')
+```
+
+```{r}
+accepts_3prop = (diff(restart_route_time[[4]])!=0)
+accepts_6prop = (diff(restart_route_time[[6]])!=0)
+
+plot(filter(accepts_3prop, rep(1/100,100)),
+                    main='Acceptance Probabilities of Different Proposals',
+                    xlab='Iteration',
+                    ylab='Acceptance Probability of Last 100 Iterations')
+lines(filter(accepts_6prop, rep(1/100,100)),col='red')
+legend('topright', legend=c("3 City", "6 City"),
+       col=c("black", "red"), lty=1, cex=1)
+```
+
+
