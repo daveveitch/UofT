@@ -1,0 +1,453 @@
+---
+title: "EDA"
+author: "David Veitch"
+date: "27/07/2021"
+output: html_document
+---
+
+### Land Temperature Data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# SET PATH OF DATASET
+
+#knitr::opts_knit$set(root.dir = "")
+# knitr::opts_knit$set(root.dir ='C:/Users/davev/Documents/ZCareer/2021/CitadelPhDDatathon/Comp/Dataset/latlongcapital')
+library(plyr)
+library(ggplot2)
+```
+
+# MAX TEMPERATURES
+#### List of Lat/Lon for capital cities
+```{r}
+# SET PATH OF DATASET
+
+#setwd()
+
+capitals_of_interest=c('Afghanistan','Angola','Bangladesh','Benin',
+                       'Bhutan','Burkina Faso','Burundi','Cambodia',
+                       'Central African Republic','Chad',
+                       'Comoros','Democratic Republic of the Congo','Djibouti','Eritrea','Ethiopia','Gambia','Guinea','Guinea-Bissau'                 ,'Haiti','Kiribati','Laos','Lesotho','Liberia','Madagascar','Malawi','Mali','Mauritania',
+'Mozambique','Myanmar','Nepal','Niger','Rwanda','Sao Tome and Principe','Senegal','Sierra Leone','Solomon Islands','Somalia','South Sudan','Sudan','East Timor','Togo','Tuvalu','Uganda','United Republic of Tanzania','Yemen','Zambia')
+
+# No data for Tuvalu and Kiribati, two small island nations, so will delete
+capitals_of_interest=capitals_of_interest[!capitals_of_interest%in%c('Tuvalu','Kiribati')]
+
+# Lots of missing data for more recent years for the following countries
+capitals_of_interest=capitals_of_interest[!capitals_of_interest%in%c('East Timor','Comoros','Mauritania','Myanmar','Sao Tome and Principe','Senegal',
+'Sierra Leone',	'Solomon Islands')]
+
+lat_lon_capitals=read.csv('capitals.csv')
+
+lat_lon_capitals=lat_lon_capitals[lat_lon_capitals$Country%in%capitals_of_interest,]
+
+# Ranges of Latitudes and Longitudes
+lon_range=seq(0.25,359.75,by=.5)
+lat_range=seq(89.75,-89.75,by=-.5)
+
+# Rounded lat/lon according to grid
+lat_lon_capitals$Lat_Round=0
+lat_lon_capitals$Lon_Round=0
+
+for(i in seq(1,dim(lat_lon_capitals)[1])){
+  country_lat=lat_lon_capitals[i,'Lat']
+  country_lon=lat_lon_capitals[i,'Lon']
+  
+  lat_lon_capitals[i,'Lon_Round']=lon_range[which.min(abs(country_lon-lon_range))]
+  lat_lon_capitals[i,'Lat_Round']=lat_range[which.min(abs(country_lat-lat_range))]
+}
+
+num_countries=dim(lat_lon_capitals)[1]
+
+# Specifically adjust some countries lat/lon to get them out of the ocean
+lat_lon_capitals[lat_lon_capitals$Country=='Angola',c('Lat_Round','Lon_Round')]=c(-8.75,13.75)
+lat_lon_capitals[lat_lon_capitals$Country=='Benin',c('Lat_Round','Lon_Round')]=c(6.75,2.25)
+```
+
+#### Get data for all countries
+
+```{r}
+
+temp_years=seq(1980,2020)
+
+# SET PATH OF DATASET - THIS IS RAW DATASET NC FILES FROM FTP
+
+#setwd()
+
+max_temps_all=matrix(nrow=0,ncol=(2+num_countries))
+
+for(year in temp_years){
+  print(year)
+  max_temps_year=matrix(nrow=365,ncol=(num_countries+2))
+  max_temps_year[,1]=year
+  max_temps_year[,2]=seq(1,365)
+  
+  nc = nc_open(paste('tmax.',year,'.nc',sep=''))
+  
+  precip = list()
+  precip$x = ncvar_get(nc, "lon")
+  precip$y = ncvar_get(nc, "lat")
+  
+  for(i in seq(1,num_countries)){
+    lat_ind = which(precip$y==lat_lon_capitals[i,'Lat_Round'])
+    lon_ind = which(precip$x==lat_lon_capitals[i,'Lon_Round'])
+    year_max_temps_one_country = ncvar_get(nc, "tmax", start=c(lon_ind,lat_ind, 1), count=c(1, 1, -1))
+    
+    # Adjust for leap years (delete middle observation)
+    if(length(year_max_temps_one_country)==366){
+      year_max_temps_one_country=year_max_temps_one_country[-60]
+    }
+    
+    max_temps_year[,i+2]=year_max_temps_one_country
+    
+  }
+    
+  max_temps_all=rbind(max_temps_all,max_temps_year)
+}
+
+colnames(max_temps_all)=c('year','day',lat_lon_capitals$Country)
+write.csv(max_temps_all,file='maxtemps36countries.csv',row.names=FALSE)
+```
+
+#### Convert to Weekly Data
+
+```{r}
+# SET PATH OF DATASET
+#setwd()
+
+max_temps_all=read.csv('maxtemps36countries.csv')
+
+# Create a DF of weekly temps
+weekly_temps=data.frame(year=rep(temp_years,each=52),
+                        week=rep(seq(1,52),length(temp_years)))
+
+for(country in names(max_temps_all)[3:dim(max_temps_all)[2]]){
+  # Take only days 1-364
+  country_temps=max_temps_all[max_temps_all$day%in%seq(1,364),c('year','day',country)]
+  
+  # Fill in NA
+  country_temps[,country]=na.locf(country_temps[,country], fromLast = TRUE)
+
+  # Calculate Week
+  country_temps$week=(country_temps$day-1)%/%7+1
+  
+  country_weekly_temps=matrix(nrow=0,ncol=3)
+  
+  for(year in temp_years){
+    for(week in seq(1,52)){
+    weekly_max=max(country_temps[(country_temps$week==week)&(country_temps$year==year),country])
+    country_weekly_temps=rbind(country_weekly_temps,c(year,week,weekly_max))
+    }
+  }
+  country_weekly_temps=as.data.frame(country_weekly_temps)
+  names(country_weekly_temps)=c('year','week',country)
+  
+  weekly_temps=join(weekly_temps,country_weekly_temps,by=c('year','week'))
+}
+
+write.csv(weekly_temps,file='maxweeklytemps36countries.csv',row.names=FALSE)
+
+```
+
+#### Seasonal Adjustments
+
+```{r}
+# SET PATH OF DATASET
+# setwd('')
+
+seasonal_adjustments=read.csv('maxweeklytemps36countries.csv')
+seasonal_countries=names(seasonal_adjustments[3:dim(seasonal_adjustments)[2]])
+seasonal_adjustments=seasonal_adjustments[,c('year','week')]
+
+seasonal_adjustments$cos_pi=cos(2*pi*seasonal_adjustments$week/52)
+seasonal_adjustments$cos_pi_2=cos(2*pi*seasonal_adjustments$week*2/(52))
+seasonal_adjustments$cos_pi_3=cos(2*pi*seasonal_adjustments$week*3/(52))
+seasonal_adjustments$cos_pi_4=cos(2*pi*seasonal_adjustments$week*4/(52))
+seasonal_adjustments$sin_pi=sin(2*pi*seasonal_adjustments$week/52)
+seasonal_adjustments$sin_pi_2=sin(2*pi*seasonal_adjustments$week*2/(52))
+seasonal_adjustments$sin_pi_3=sin(2*pi*seasonal_adjustments$week*3/(52))
+seasonal_adjustments$sin_pi_4=sin(2*pi*seasonal_adjustments$week*4/(52))
+
+for(country in seasonal_countries){
+  
+  fit <-lm(weekly_temps[,country]~cos_pi+cos_pi_2+cos_pi_3+cos_pi_4+
+                  sin_pi+sin_pi_2+sin_pi_3+sin_pi_4,
+         data=seasonal_adjustments)
+
+  one_year=seq(1,52)
+  
+  seasonal_fit=(rep(fit$coefficients[1],52)+
+                fit$coefficients[2]*cos(2*pi*one_year/52)+
+                fit$coefficients[3]*cos(2*pi*one_year*2/52)+
+                fit$coefficients[4]*cos(2*pi*one_year*3/52)+
+                fit$coefficients[5]*cos(2*pi*one_year*4/52)+
+                fit$coefficients[6]*sin(2*pi*one_year/52)+
+                fit$coefficients[7]*sin(2*pi*one_year*2/52)+
+                fit$coefficients[8]*sin(2*pi*one_year*3/52)+
+                fit$coefficients[9]*sin(2*pi*one_year*4/52)) 
+  
+  seasonal_adjustments[,country]=rep(seasonal_fit,length(temp_years))
+}
+
+write.csv(seasonal_adjustments,file='seasonaladjustments36countries.csv',row.names=FALSE)
+```
+
+# PRECIPITATION
+
+#### Get data for all countries
+```{r}
+temp_years=seq(1980,2020)
+
+# SET PATH OF DATASET
+
+#setwd()
+
+precip_all=matrix(nrow=0,ncol=(2+num_countries))
+
+for(year in temp_years){
+  print(year)
+  precip_year=matrix(nrow=365,ncol=(num_countries+2))
+  precip_year[,1]=year
+  precip_year[,2]=seq(1,365)
+  
+  nc = nc_open(paste('precip.',year,'.nc',sep=''))
+  
+  precip = list()
+  precip$x = ncvar_get(nc, "lon")
+  precip$y = ncvar_get(nc, "lat")
+  
+  for(i in seq(1,num_countries)){
+    lat_ind = which(precip$y==lat_lon_capitals[i,'Lat_Round'])
+    lon_ind = which(precip$x==lat_lon_capitals[i,'Lon_Round'])
+    year_precip_one_country = ncvar_get(nc, "precip", start=c(lon_ind,lat_ind, 1), count=c(1, 1, -1))
+    
+    # Adjust for leap years (delete middle observation)
+    if(length(year_precip_one_country)==366){
+      year_precip_one_country=year_precip_one_country[-60]
+    }
+    
+    precip_year[,i+2]=year_precip_one_country
+    
+  }
+    
+  precip_all=rbind(precip_all,precip_year)
+}
+
+colnames(precip_all)=c('year','day',lat_lon_capitals$Country)
+write.csv(precip_all,file='precip36countries.csv',row.names=FALSE)
+```
+#### Covert to monthly data (4 week periods)
+
+```{r}
+# SET PATH OF DATASET
+# setwd('')
+precip_all=read.csv('precip36countries.csv')
+
+# Fill in NA
+for(country in names(precip_all)[3:length(names(precip_all))]){
+  precip_all[,country]=na.locf(precip_all[,country], fromLast = TRUE)
+}
+
+# add four week periods to precipitation
+monthly_precip=precip_all
+monthly_precip$four_week_period=pmin((monthly_precip$day-1)%/%28+1,13)
+
+write.csv(monthly_precip,file='maxweeklyprecip36countries.csv',row.names=FALSE)
+
+```
+#### Seasonal adjustments
+```{r}
+# SET PATH OF DATASET
+# setwd()
+
+seasonal_adjustments=read.csv('maxweeklyprecip36countries.csv')
+
+
+for(country in names(seasonal_adjustments)[3:(dim(seasonal_adjustments)[2]-1)]){
+  for(i in seq(1,13)){
+    period_average=mean(seasonal_adjustments[seasonal_adjustments$four_week_period==i,country])
+    seasonal_adjustments[seasonal_adjustments$four_week_period==i,country]=period_average
+  }  
+}
+  
+write.csv(seasonal_adjustments,file='seasonaladjustments36countriesprecip.csv',row.names=FALSE)
+```
+
+# Some graphs for the report
+
+```{r}
+# SET PATH OF DATASET
+# temp_dir=
+# prec_dir=
+
+setwd(temp_dir)
+daily_temps=read.csv('maxtemps36countries.csv')
+
+setwd(prec_dir)
+daily_precip=read.csv('precip36countries.csv')
+
+days=seq(as.Date("1980/1/1"), as.Date("2020/12/31"), "days")[1:14965]
+
+data_to_plot=data.frame(date=days,
+                        max_temp=daily_temps$Bangladesh,
+                        precip=daily_precip$Bangladesh)
+
+
+p_1<-ggplot(data=data_to_plot,aes(x=date,y=max_temp))+
+  geom_line()+
+  theme_minimal()+
+  ylab('Max Temperature (Celsius)')+
+  xlab('Date')+
+  ggtitle('Bangladesh\nDaily Max Temperature')+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+p_2<-ggplot(data=data_to_plot,aes(x=date,y=precip))+
+  geom_line()+
+  theme_minimal()+
+  ylab('Precipitation (mm)')+
+  xlab('Date')+
+  ggtitle('Bangladesh\nDaily Precipitation')+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+grid.arrange(p_1, p_2, ncol=2)
+
+```
+
+```{r}
+# SET PATH OF DATASET
+
+# temp_dir=
+setwd(temp_dir)
+
+# extract seasonal temperature effect for bangladesh
+bangladesh_seasonal_temps=read.csv('seasonaladjustments36countries.csv')$Bangladesh[1:52]
+
+seas_df_temp=data.frame(week=seq(1,52),seas=bangladesh_seasonal_temps)
+
+# here I have copied the seasonal effect of rain from the output
+# of the quantile regression for bangladesh
+bangladesh_seasonal_rains=c(3.20571396661843, 5.16573984482709, 11.6500674188138, 3.17323301777695, 
+2.99453186988835, 0.662220967121613, 0.178028428128787, 0.663303175280169, 
+1.29814454498592, 0.0234402379682043, 1.09856141240973, 0.207923960685692, 
+3.6275668144226)
+
+seas_df_rain=data.frame(week=seq(1,13),seas=bangladesh_seasonal_rains)
+
+p_1<-ggplot(data=seas_df_temp,aes(x=week,y=seas))+
+  geom_point()+
+  geom_line()+
+  theme_minimal()+
+  ylab('Max Temperature (Celsius)')+
+  xlab('Week')+
+  ggtitle('Bangladesh\nWeekly Max Temperature Seasonal Average')+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+p_2<-ggplot(data=seas_df_rain,aes(x=week,y=seas))+
+  geom_point()+
+  geom_line()+
+  theme_minimal()+
+  ylab('Precipitation (mm)')+
+  xlab('Set of Four Weeks')+
+  ggtitle('Bangladesh\n Seasonal Effect on Extreme Precipitation')+
+  theme(plot.title = element_text(hjust = 0.5,size=10))+
+  scale_x_continuous(breaks=seq(1,13),labels=seq(1,13))
+
+grid.arrange(p_1, p_2, ncol=2)
+```
+
+```{r}
+# SET PATH OF DATASET
+# temp_dir=
+setwd(temp_dir)
+
+yemen_temps=read.csv('maxweeklytemps36countries.csv')$Yemen
+# extract seasonal temperature effect for bangladesh
+yemen_seasonal_temps=read.csv('seasonaladjustments36countries.csv')$Yemen
+
+# have to truncate slightly
+date_seq=seq(as.Date("1980/1/1"), as.Date("2020/12/31"), "weeks")[1:2132]
+
+yemen_sa_temps=yemen_temps-yemen_seasonal_temps
+
+y_sa_temp_df=data.frame(week=date_seq,yemen_temp=yemen_sa_temps)
+
+p_1<-ggplot(data=y_sa_temp_df,aes(x=week,y=yemen_sa_temps))+
+  geom_line()+
+  ylab('Seasonally Adjusted \nMax Temperature (Celsius)')+
+  xlab('Date')+
+  ggtitle('Yemen\nWeekly Max Temperature Seasonally Adjusted')+
+  geom_rect(aes(xmin=as.Date("1980/1/1"), xmax=as.Date("2002/12/31"), ymin=-Inf, ymax=Inf),alpha=.005,fill='red')+
+  geom_rect(aes(xmin=as.Date("2003/1/1"), xmax=as.Date("2020/12/31"), ymin=-Inf, ymax=Inf),alpha=.004,fill='darkolivegreen4')+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+p_1
+```
+
+```{r}
+# quantreg example
+
+# SET PATH OF DATASET
+# prec_dir=
+
+setwd(prec_dir)
+daily_precip=read.csv('precip36countries.csv')
+
+library(quantreg)
+
+fit_95=rq(daily_precip$Bangladesh~seq(1,14965),tau=.95)
+fit_99=rq(daily_precip$Bangladesh~seq(1,14965),tau=.99)
+
+trend_95=fit_95$coefficients[1]+seq(1,14965)*fit_95$coefficients[2]
+
+trend_99=fit_99$coefficients[1]+seq(1,14965)*fit_99$coefficients[2]
+
+qr_df=data.frame(date=seq(as.Date("1980/1/1"),as.Date("2020/12/31"), "days")[1:14965],
+                 precip=daily_precip$Bangladesh,
+                 qr_95=trend_95,
+                 qr_99=trend_99
+                 )
+
+  
+p_1<-ggplot(data=qr_df,aes(x=date))+
+  geom_line(aes(y=qr_95,col='.95 Percentile'),size=2)+
+  geom_line(aes(y=qr_99,col='.99 Percentile'),size=2)+
+  geom_point(aes(y=precip,col='Data'),size=.2)+
+  xlab('Date')+
+  ylab('Precipitation (mm)')+
+  scale_colour_manual(values=c("orange","red","blue"))+
+  labs(color = "")+
+  ggtitle('Bangladesh\n Example Quantile Regression')+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+p_1
+```
+
+```{r}
+# SET PATH OF DATASET
+#temp_dir=
+setwd(temp_dir)
+
+yemen_temps=read.csv('maxweeklytemps36countries.csv')$Zambia
+# extract seasonal temperature effect for bangladesh
+yemen_seasonal_temps=read.csv('seasonaladjustments36countries.csv')$Zambia
+
+# have to truncate slightly
+date_seq=seq(as.Date("1980/1/1"), as.Date("2020/12/31"), "weeks")[1:2132]
+
+yemen_sa_temps=yemen_temps-yemen_seasonal_temps
+
+y_sa_temp_df=data.frame(week=date_seq,yemen_temp=yemen_sa_temps)
+
+p_1<-ggplot(data=y_sa_temp_df,aes(x=week,y=yemen_sa_temps))+
+  geom_line()+
+  ylab('Seasonally Adjusted \nMax Temperature (Celsius)')+
+  xlab('Date')+
+  ggtitle('Zambia\nWeekly Max Temperature Seasonally Adjusted')+
+  theme_minimal()+
+  theme(plot.title = element_text(hjust = 0.5,size=10))
+
+p_1
+```
+

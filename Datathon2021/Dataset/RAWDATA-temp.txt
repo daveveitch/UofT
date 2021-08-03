@@ -1,0 +1,3 @@
+raw data used was
+
+tmax.XXXX.nc where XXXX=1980,1981,....,2020 from ftp2.psl.noaa.gov folder Datasets/cpc_global_temp
